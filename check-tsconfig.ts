@@ -1,19 +1,22 @@
-'use strict'
+import { readFile } from 'node:fs/promises'
 
-const {readFile} = require('fs').promises
-const fetch = require('node-fetch')
+interface Matcher<Result> {
+	match(s: string): Result | null
+	matchAll(s: string): IterableIterator<Result>
+}
 
-class RegExpMatcher {
-	constructor(pattern) {
+class RegExpMatcher implements Matcher<RegExpExecArray> {
+	declare re
+	constructor(pattern: RegExp) {
 		this.re = pattern
 	}
-	match(s) {
+	match(s: string) {
 		const m = this.re.exec(s)
 		if (!m) return null
 		if (this.re.global || this.re.sticky) this.re.lastIndex = 0
 		return m
 	}
-	*matchAll(s) {
+	*matchAll(s: string) {
 		if (this.re.global || this.re.sticky) {
 			for (;;) {
 				const {lastIndex} = this.re
@@ -36,21 +39,22 @@ class RegExpMatcher {
 	}
 }
 
-class NaiveElementMatcher extends RegExpMatcher {
-	constructor(tagName) {
-		super(new RegExp(`<(${tagName})(\s.*?)?>(.*?)</${tagName}>`, 'sg'))
+class NaiveElementMatcher implements Matcher<{tagName: string, attributes?: string, innerHTML: string}> {
+	declare re
+	constructor(tagName: string) {
+		this.re = new RegExpMatcher(new RegExp(`<(${tagName})(\s.*?)?>(.*?)</${tagName}>`, 'sg'))
 	}
-	match(html) {
-		const m = super.match(html)
+	match(html: string) {
+		const m = this.re.match(html)
 		return m ? createElement(m) : m
 	}
-	*matchAll(html) {
-		for (const m of super.matchAll(html)) {
+	*matchAll(html: string) {
+		for (const m of this.re.matchAll(html)) {
 			yield createElement(m)
 		}
 	}
 }
-function createElement(m) {
+function createElement(m: RegExpExecArray): {tagName: string, attributes?: string, innerHTML: string} {
 	return {
 		tagName: m[1],
 		attributes: m[2],
@@ -89,8 +93,8 @@ async function compilerOptions() {
 			cli,
 		})
 	}
-	const docb = await fetch('https://www.typescriptlang.org/docs/handbook/compiler-options-in-msbuild.html')
-	for (const row of tr.matchAll(await docb.text())) {
+	const docMsbuild = await fetch('https://www.typescriptlang.org/docs/handbook/compiler-options-in-msbuild.html')
+	for (const row of tr.matchAll(await docMsbuild.text())) {
 		const cells = [...td.matchAll(row.innerHTML)]
 		if (!cells.length) continue
 		const _option = code.match(cells[0].innerHTML)
@@ -100,7 +104,7 @@ async function compilerOptions() {
 		const notSupported = _notSupported && _notSupported.innerHTML === 'Not supported in MSBuild'
 		const type = cells[2].innerHTML
 
-		if (notSupported && type.trim() !== '') console.warn(`${option} ${notSupported.innerHTML} "${type}"`)
+		if (notSupported && type.trim() !== '') console.warn(`${option} ${_notSupported.innerHTML} "${type}"`)
 
 		const exist = options.find(({option: o}) => option === o)
 		if (!exist) {
@@ -117,15 +121,15 @@ async function compilerOptions() {
 }
 
 async function initOptions() {
-	const text = await readFile(`${__dirname}/tsconfig.json`, 'utf8')
+	const text = await readFile(`${import.meta.dirname}/tsconfig.json`, 'utf8')
 	const keys = text.match(/"(.+?)":/g)
-	return keys.map(k => k.slice(1, -2))
+	return keys!.map(k => k.slice(1, -2))
 }
 
 async function baseOptions() {
-	const text = await readFile(`${__dirname}/src/tsconfig.yaml`, 'utf8')
+	const text = await readFile(`${import.meta.dirname}/src/tsconfig.yaml`, 'utf8')
 	const keys = text.match(/(\S+?):/g)
-	return keys.map(k => k.slice(0, -1))
+	return keys!.map(k => k.slice(0, -1))
 }
 
 void async function main() {
